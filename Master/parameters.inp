@@ -1,0 +1,74 @@
+// Use non dimensional units, scaled by cell size and elasticity
+
+// Dimensional scales
+length_scale := 15;				// This is sqrt(A_0), in um
+time_scale := 180;				// Simulation time to real time, in s
+force_scale := 225;				// Simulation force to real force, in nN
+
+
+// Vertex model parameters - Area elasticity, kappa, is scaled to 1
+kappa := 0.0666;				// Area elasticity, in nN / um^3
+gamma := 15;					// Contracility, in nN / um
+pzero := 3.6;					// Target shape index, dimensionless
+colony_tension := 112.5;		// Border edge tension, in nN
+
+// Cell motility parameters
+
+DR := 10 / 3600;				// Rotational diffusion, 1/s
+V0 := 30 / 3600;				//Internal motility speed, 1/s
+protrusion_force := 1125;
+
+// Adhesion parameters
+
+kon := 500 / 3600;				// Binding rate, 1/s
+koff := 50 / 3600;				// Unbinding rate, 1/s
+max_binding_distance := 3;		// Maximum length of a focal adhesion - wont bind if outside this range, um
+focal_stiffness := 60;			// Adhesion spring stiffness, nN / um
+
+//Substrate and focal adhesions in Pa
+
+substrate_youngs := 4;			// In kPa = nN / um^2
+substrate_height := 7.5;		// In um
+
+
+// Micropattern shape
+
+pattern_curvature := 36.75;		// The radius of the curved region, um
+pattern_area := 6750;			// Total area of the micropattern, um^2
+pattern_height := (pattern_area - 3.14 * pattern_curvature ** 2) / (2 * pattern_curvature);
+
+
+
+// Simulation implementation parameters
+
+viscosity := 2700;				// Viscosity in over damped limit, nN s / um
+dt := 1.8;						// Individual timestep, s
+lt1 := 1.5;						// T1 threshold length, um
+lmin := 1.5;					// Minimum edge length in cell, um - shorter edge will merge with neighbours
+lmax := 7.5;					// Maximum edge length in cell, um - longer edges will be split
+
+
+
+// Other "under-the-hood" parameters
+
+random_seed := 1; 				// Seed for random number generation
+img_output_interval := 100;		// Number of time steps to output images
+record_interval := 100;			// Number of time steps to output statistics
+output_name := "master";		// ID string of simulations
+
+//Colours
+
+cellCol := BLACK;
+focalCol := LightRed;
+ecmCol := WHITE;
+protrusionCol := GREEN;
+
+
+// Variables to track
+simulation_step := 0; 			// Initialize simulation step counter
+t1_count := 0;					// Number of T1 transitions
+newf := -1;						// Id of boundary facet - to be updated later
+nfacets := sum(facet, 1);		// Number of facets
+
+
+
