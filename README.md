@@ -1,6 +1,6 @@
 # README #
 
-### Active Vertex Model ###
+### Active Adherent Vertex Model (AAVM) ###
 
 ##### as detailed in : #####
 #### Force localization modes in dynamic epithelial colonies, bioRxiv:336164 (2018) ####
