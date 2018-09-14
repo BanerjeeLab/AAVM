@@ -1,0 +1,133 @@
+// Create the wound
+poke_wound:=
+{
+	define wound_facets_bulk integer[facet_count];
+	define wound_edges_bulk integer[edge_count];
+	define wound_vertices_bulk integer[vertex_count];
+
+	//Elliptic constants
+	aa := wound_radius ** 2 / length_scale ** 2 * wound_aspect_ratio;
+	bb := wound_radius ** 2 / length_scale ** 2 / wound_aspect_ratio;
+
+
+	// define cell facets belonging to wound
+	foreach vertex vv where (vv.x-wound_center_x)^2 / aa +(vv.y-wound_center_y)^2 / bb < 1 and substrate == 0 do {wound_facets_bulk[vv.facet[1].id]:=1; wound_facets_bulk[vv.facet[2].id]:=1;};
+	
+	// make cells in the wound carry no energy
+	foreach facet ff where wound_facets_bulk[ff.id]>0 do
+	{
+		    mycom := sprintf "per%g.modulus:=0",ff.id; 
+            exec mycom;      
+            mycom := sprintf "ten%g.modulus:=0",ff.id; 
+            exec mycom;
+            mycom := sprintf "farea%g.modulus:=0",ff.id; 
+            exec mycom;
+	};
+
+	// define vertices and edges INSIDE wound
+	foreach vertex vv where sum(vv.facets,1) == 3 AND wound_facets_bulk[vv.facet[1].id]+wound_facets_bulk[vv.facet[2].id]+wound_facets_bulk[vv.facet[3].id] == 3 
+	do {wound_vertices_bulk[vv.id]:=1};
+
+
+	foreach edges ee where ee.valence == 2 AND wound_facets_bulk[ee.facet[1].id]+wound_facets_bulk[ee.facet[2].id] == 2 
+	do {wound_edges_bulk[ee.id]:=1};
+
+
+	foreach edges ee where ee.valence == 2 AND wound_facets_bulk[ee.facet[1].id]+wound_facets_bulk[ee.facet[2].id] == 1
+	do 
+	{
+		ee.wound_edge := 1; 
+		facet[ee.facet[1].id].wound_facet:=1;
+		facet[ee.facet[2].id].wound_facet:=1;
+		set ee color red;
+	};
+
+
+	dissolve facets ff where wound_facets_bulk[ff.id] == 1 ;
+	dissolve edges ee where wound_edges_bulk[ee.id] == 1 ; 
+ 	dissolve vertices vv where wound_vertices_bulk[vv.id] == 1 ;
+
+
+ 	
+ 	foreach facet ff where wound_facet == 1 do 
+ 	{
+ 		local ilist,ii,nn;
+ 		nn := sum(ff.edges,wound_edge);
+ 		if nn > 1 
+		then 
+			{
+	 		define ilist integer[nn];
+	 		ii:=1;
+	 		foreach ff.edges ee where wound_edge == 1 do {ilist[ii]:=ee.id; ii+=1};
+	 		// print ilist;
+	 		for ( ii := 1 ; ii <  nn; ii += 1 ) {delete edge[ilist[ii]]}
+			}
+		else{};
+
+ 	};
+
+
+ 	init_method_instance;
+
+
+};
+
+
+// Move vertices on the wound to the target wound shape - relax the system about this
+fix_wound_shape :=
+{
+	local move_scale;
+
+	foreach edge ee where wound_edge == 1 do
+	{
+		foreach ee.vertex vv do
+		{
+			move_scale := wound_radius ** 2 / length_scale ** 2  / ((vv.x-wound_center_x)^2 / wound_aspect_ratio + (vv.y - wound_center_y)^2 * wound_aspect_ratio);
+			move_scale := sqrt(move_scale);
+			vv.x := (vv.x - wound_center_x) * move_scale + wound_center_x;
+			vv.y := (vv.y - wound_center_y) * move_scale + wound_center_y;
+		}
+
+	};
+}
+
+
+// Create a non-cell facet at the wound site, this will allow for proper cell rearrangements and also cells can leave the wound edge or become a part of it. 
+create_wound_facet:=
+{	
+	wound_edge_count := sum(edges,wound_edge);
+	define oid_list integer[wound_edge_count];
+
+	foreach edge ee where wound_edge == 1 do {oid_list[1]:=ee.id; break};
+	
+	for ( ii := 2 ; ii <  wound_edge_count+1; ii += 1 ) 
+		{
+			vid1:=edge[oid_list[ii-1]].vertex[2].id;
+			eid := abs(oid_list[ii-1]);
+			if sum(edges ee where ee.vertex[1].id == vid1 AND ee.wound_edge == 1 AND ee.id != eid,1) == 1
+				then
+				{
+					oid_list[ii] := sum(edges ee where ee.vertex[1].id == vid1 AND ee.wound_edge == 1 AND ee.id != eid,id);
+				}
+				
+			else 		
+				{
+					oid_list[ii] := -sum(edges ee where ee.vertex[2].id == vid1 AND ee.wound_edge == 1 AND ee.id != eid,id);
+				}	
+			
+		};
+
+	
+	cmd_string := sprintf "newf:=new_facet( %d",oid_list[1];
+
+	for ( ii := 2 ; ii <  wound_edge_count + 1; ii += 1 ) 
+		{
+			cmd_string := sprintf "%s, %d", cmd_string,  oid_list[ii];
+		};
+	cmd_string := sprintf "%s )", cmd_string;
+	exec cmd_string;
+
+	//Flag as an empty facet
+	set facet[newf] void 1;
+
+};

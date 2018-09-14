@@ -39,10 +39,11 @@ function real randn(real mean, real std_dev)
 //-----------------------------------------------------------------//
 //-----------------------------------------------------------------//
 
+// Assign edges and facets to their energy methods
 init_method_instance := 
 {
   local mycom;
-  foreach facets ff where not void do
+  foreach facets ff do
   { 
       mycom := sprintf "unset edges ar%g",ff.original;
       exec mycom;      
@@ -55,17 +56,8 @@ init_method_instance :=
   }
 }; 
 
-eq_energy :=
-{ 
-  local nn;
-  conj_grad on;
-  init_method_instance;
-  do {g 1; nn+=1} 
-  while (scale > 1e-10 AND nn < 1000); 
-  return
-}; 
 
-/* 1, random cell polarization with mean length 1, angle from uniform [0,2pi] */
+/* Random cell polarization angle from uniform [0,2pi] */
 initialize_polarization_facet:=
 {
     foreach facet ff where not void do
@@ -74,107 +66,45 @@ initialize_polarization_facet:=
     } 
 };
 
-
-//This initialises the outside as a facet so we can perform T1 swaps for edges on the outside
-init_void_facet :=
+/* set all cell properties according to parameters file */
+set_cell_properties:=
 {
-
-	void_edge_count := sum(edges where valence == 1 and sub_edge == 0 and focal == 0, 1);
-	define oid_list integer[void_edge_count];
-
-
-	foreach edge ee where valence == 1 and sub_edge == 0 and focal == 0 do {oid_list[1]:=ee.id; break};
-
-	for ( ii := 2 ; ii <  void_edge_count+1; ii += 1 )
+	local mycom;
+	foreach facet ff where not void do
 	{
-		vid1:=edge[oid_list[ii-1]].vertex[2].id;
-		eid := abs(oid_list[ii-1]);
-		if sum(edges ee where ee.vertex[1].id == vid1 AND ee.valence == 1 AND ee.sub_edge == 0 AND ee.focal == 0 AND ee.id != eid,1) == 1
-		then
-		{
-			oid_list[ii] := sum(edges ee where ee.vertex[1].id == vid1 AND ee.valence == 1 AND ee.sub_edge == 0 AND ee.focal == 0 AND ee.id != eid,id);
-		}
-
-		else
-		{
-			oid_list[ii] := -sum(edges ee where ee.vertex[2].id == vid1 AND ee.valence == 1 AND ee.sub_edge == 0 AND ee.focal == 0 AND ee.id != eid, id);
-		}
-
+		mycom := sprintf "farea%d.modulus := %f;", ff.id, kappa * length_scale ** 3 / force_scale; 
+		exec mycom;
+		mycom := sprintf "per%d.modulus := %f;", ff.id, gamma * length_scale / force_scale; 
+		exec mycom;
+		mycom := sprintf "ten%d.modulus := %f;", ff.id, -2 * gamma * pzero * length_scale / force_scale;
+		exec mycom; 
 	};
-
-
-	cmd_string := sprintf "newf:=new_facet( %d",oid_list[1];
-
-	for ( ii := 2 ; ii <  void_edge_count + 1; ii += 1 )
-	{
-		cmd_string := sprintf "%s, %d", cmd_string,  oid_list[ii];
-	};
-
-	cmd_string := sprintf "%s )", cmd_string;
-	exec cmd_string;
-
-	set facet[newf] void 1;
-}
-
-//-----------------------------------------------------------------//
-/* Define micro pattern */
-
-
-//Returns the distance to the pattern edge - negative if inside
-function real pattern_distance(real xx, real yy)
-{
-	if yy > 0.5*pattern_height  / length_scale then return (sqrt(xx ** 2 + (yy-0.5 * pattern_height / length_scale) ** 2) - pattern_curvature  / length_scale);
-
-	if yy < -0.5*pattern_height  / length_scale then return (sqrt(xx ** 2 + (yy+0.5*pattern_height  / length_scale) ** 2) - pattern_curvature  / length_scale);
-
-	return (sqrt(xx*xx) - pattern_curvature  / length_scale);
-}
-
-//Returns 1 if inside pattern, else 0
-function integer inside_pattern(real xx, real yy)
-{
-	return (pattern_distance(xx, yy) < 0);
 }
 
 
-// Set up the micropatterned area
-init_micropattern :=
-{
-	foreach vertex vv where substrate do
-	{
-		if (inside_pattern(vv.x, vv.y)) then
-		{
-			vv.bindable := 1;
-		};
-};
-};
-
 
 //-----------------------------------------------------------------//
-/* Focal adhesions and substrate energies */
+/* Focal adhesions */
 //-----------------------------------------------------------------//
 
-
-//Connect the cells vertices to the closest substrate cell
+// Create initial focal adhesions from cell vertices to the closest substrate node
 init_focal_adhesion :=
 {
-	local minDist;	//Use square distance for efficiency
+	local minDist;
 	local minId;
 	local newe;
 
 	foreach vertex vv where substrate != 1 do
 	{
-		//Some large value to start with
-		minDist := max_binding_distance  / length_scale;
+		minDist := max_binding_distance;
 		foreach vertex ss where substrate == 1 and bindable do
 		{
 			if (vv.x - ss.x)^2 + (vv.y - ss.y)^2 < minDist then {minDist := (vv.x - ss.x)^2 + (vv.y - ss.y)^2; minId := ss.id}
 		};
 
 		//Only bind if there is a point within the maximum distance
-		if minDist < max_binding_distance then {
-
-
+		if minDist < max_binding_distance / length_scale then
+		{
 			//Create new edge
 			newe := new_edge(vv.id, minId);
 			set vv has_focal 1;
@@ -184,7 +114,7 @@ init_focal_adhesion :=
 			set edge[newe] method_instance focal_spring;
 			set edge[newe] hooke_size edge[newe].length;
 		};
-	};
+	}
 };
 
 //Set up elastic energies for the substrate and focal adhesions
@@ -203,23 +133,66 @@ init_sub_energy :=
 
 	//Set their scaling constants
 
-	//Substrate energy - use stiffness = sqrt(3)/2 * E:  since it is a triangular network
+	//Substrate energy - use stiffness = sqrt(3)/2 * E :  since it is a triangular network
 	sub_spring.modulus := sqrt(3)/2 * substrate_youngs * substrate_height * length_scale / force_scale;
 
 	//Focal adhesions
 	focal_spring.modulus := focal_stiffness * length_scale / force_scale;
 };
-
-
-//Can a vertex create a protrusion?
-function integer can_protrude(integer vid, integer fid)
+  
+    
+//Calculate only one cell center
+procedure get_one_cell_center (integer fid)
 {
-	//We can protrude if we are in front of the cell center wrt the polarisation direction
+	local cx, cy;
 
-	return ((vertex[vid].x - facet[fid].center_x)*cos(facet[fid].pol_angle) + (vertex[vid].y - facet[fid].center_y)*sin(facet[fid].pol_angle) > 0);
+	cx := 0;
+	cy := 0;
+
+	//Weight by the length of the edges connected to the vertex
+	foreach facet[fid].edge ee do
+	{
+		cx += ee.length * (ee.vertex[1].x + ee.vertex[2].x) * 0.5;
+		cy += ee.length * (ee.vertex[1].y + ee.vertex[2].y) * 0.5;
+	};
+
+	facet[fid].center_x := cx/sum(facet[fid].edge, length);
+	facet[fid].center_y := cy/sum(facet[fid].edge, length);
+
+    return;
 }
 
-//Create the protrusion - returns the id
+
+//Calculates the cell centers
+get_cell_centers :=
+{
+
+	foreach facet ff do
+	{
+		get_one_cell_center(ff.id);
+	}
+
+}
+
+
+// Check if cell vertex can protrude
+function integer can_protrude(integer vid, integer fid)
+{
+	if facet[fid].crawling == 0 then return 0;
+
+	// Protrusions can only happen on the outside
+	if sum(vertex[vid].facet where void == 1, 1) == 0 then return 0;
+
+	//We can protrude if we are in front of the cell center wrt the polarisation direction
+	local cx, cy;
+
+	cx := facet[fid].center_x;
+	cy := facet[fid].center_y;
+
+	return ((vertex[vid].x - cx)*cos(facet[fid].pol_angle) + (vertex[vid].y - cy)*sin(facet[fid].pol_angle) > 0);
+}
+
+// Create the protrusion - returns the id
 function integer create_protrusion(integer vid, integer fid)
 {
 	//Make protrusions fan out from the polarisation angle
@@ -227,6 +200,7 @@ function integer create_protrusion(integer vid, integer fid)
 
 	cx := facet[fid].center_x;
 	cy := facet[fid].center_y;
+
 
 	//Take average of polarisation angle and angle from cell center. Need to work a bit because of the mod 2pi
 
@@ -241,12 +215,12 @@ function integer create_protrusion(integer vid, integer fid)
 		angle := (facet[fid].pol_angle % 2*pi + atan2(vertex[vid].y - cy, vertex[vid].x - cx) % 2*pi)/2 + pi % 2*pi;
 	};
 
-    // Move the cell edge forwards
-    
-    vertex[vid].x := vertex[vid].x + protrusion_force * dt / viscosity / length_scale * cos(angle);
-    vertex[vid].y := vertex[vid].y + protrusion_force * dt / viscosity / length_scale * sin(angle);
+	vertex[vid].x += cos(angle) * protrusion_force / viscosity / length_scale * dt;
+	vertex[vid].y += sin(angle) * protrusion_force / viscosity / length_scale * dt;
 
-    return vid;
+	newv := vid;
+	
+	return newv;
 }
 
 //Turn over focal adhesions and make new connections
@@ -254,17 +228,16 @@ update_adhesions :=
 {
 	foreach vertex vv where substrate == 0 and protrusion_vertex == 0 do
 	{
-	//Randomly connect and disconnect
-
+		//Randomly connect and disconnect
 		if vv.has_focal == 0 and random < kon * dt then
 		{
+
 			//We will connect a focal adhesion to the vertex unless we can make a protrusion
 			bindingVid := vv.id;
 
 			//If we are on the outside and can protrude then do so!
-			if (sum(vv.facet where void == 0, 1) == 1 AND can_protrude(vv.id, min(vv.facet where void == 0, id))) then
+			if can_protrude(vv.id, min(vv.facet where void == 0, id)) then
 			{
-
 				//We attach the focal adhesion to the protrusion
 				bindingVid := create_protrusion(vv.id, min(vv.facet where void == 0, id));
 
@@ -281,9 +254,8 @@ update_adhesions :=
 			};
 
 			//Only bind if there is a point within the maximum distance
-			if minDist < max_binding_distance*max_binding_distance then
+			if minDist < max_binding_distance ** 2 / length_scale ** 2 then
 			{
-
 				//Create new edge
 				newe := new_edge(bindingVid, minId);
 				set vv has_focal 1;
@@ -292,27 +264,22 @@ update_adhesions :=
 
 				set edge[newe] method_instance focal_spring;
 				set edge[newe] hooke_size edge[newe].length;
+
+
 			};
-
-
 		}
 
 		else if vv.has_focal == 1 and random < koff * dt then
 		{
-			vv.has_focal := 0;
-
 			//Delete the protrusion. This attaches the focal adhesion to the cell
 			foreach vv.edge ee where protrusion == 1 do {delete ee};
 			foreach vv.edge ee where focal == 1 do {dissolve ee; set vv has_focal 0;};
 		};
-
 	};
-
-
 };
 
 //-----------------------------------------------------------------//
-/* Simulation output */
+/* Recording */
 //-----------------------------------------------------------------//
 
 /* Record displacement on the substrate */
@@ -329,59 +296,53 @@ record_displacements :=
 }
 
 
-get_cell_centers :=
+record_wound_area :=
 {
-	foreach facet ff where void == 0 do
-	{
-		local cx, cy;
-
-		cx := 0;
-		cy := 0;
-
-		//Weight by the length of the edges connected to the vertex
-		foreach ff.edge ee do
-		{
-			cx += ee.length * (ee.vertex[1].x + ee.vertex[2].x) * 0.5;
-			cy += ee.length * (ee.vertex[1].y + ee.vertex[2].y) * 0.5;
-		};
-
-		 ff.center_x := cx/sum(ff.edge, length);
-		 ff.center_y := cy/sum(ff.edge, length);
-	};
+	recname := sprintf "output/wound_area_%s.csv", output_name;
+	printf "%f, %f\n", simulation_step, wound_area >> recname;
 }
 
-/* Record cell centers */
+
+
+/* Record approximate cell centers - take mean position of vertices */
 record_cell_centers :=
 {
 	recname := sprintf "output/cell_center_%s.csv", output_name;
 	foreach facet ff where void == 0 do
 	{
-		local cx, cy;
-
-		cx := 0;
-		cy := 0;
-
-		//Weight by the length of the edges connected to the vertex
-		foreach ff.edge ee do
-		{
-			cx += ee.length * (ee.vertex[1].x + ee.vertex[2].x) * 0.5;
-			cy += ee.length * (ee.vertex[1].y + ee.vertex[2].y) * 0.5;
-		};
-
-		cx := cx/sum(ff.edge, length);
-		cy := cy/sum(ff.edge, length);
-
-		printf "%f, %f,", cx, cy >> recname;
+		printf "%f, %f,", ff.center_x, ff.center_y >> recname;
 	};
 	//New line
 	printf "\n" >> recname;
 }
 
+record_wound_center :=
+{
+	recname := sprintf "output/wound_center_%s.csv", output_name;
+	printf "%f, %f\n", facet[newf].center_x, facet[newf].center_y >> recname;
+}
+
+/* Record shape parameter, perimeter/sqrt(area) */
+record_shape_parameter :=
+{
+	recname := sprintf "output/shape_parameter_%s.csv", output_name;
+	foreach facet ff where void == 0 do
+	{
+		shape_param := 0;
+		//Get perimeter and shape
+		cmd := sprintf "shape_param := perim%d.value / sqrt(ar%d.value);", ff.id, ff.id;
+		exec cmd;
+
+		printf "%f,", shape_param >> recname;
+	};
+	//New line
+	printf "\n" >> recname;
+}
 
 /* Record position of the wound vertices */
-record_boundary_vertices :=
+record_wound_vertices :=
 {
-	recname := sprintf "output/colony_boundary_%s_%06d.csv", output_name, simulation_step;
+	recname := sprintf "output/wound_position_%s_%06d.csv", output_name, simulation_step;
 
 	foreach facet[newf].vertex vv do
 	{
@@ -389,42 +350,147 @@ record_boundary_vertices :=
 	};
 }
 
+get_wound_distance :=
+{
+    // Get distance of cells away from the wound
+    set facet wound_distance 100;
+    
+    set facet[newf] wound_distance 0;
+    
+    local current_dist;
+    
+    current_dist := 0;
+    while max(facet, wound_distance) == 100 do
+    {
+        // Flood fill the distance
+        foreach facet ff where wound_distance == current_dist do
+        {
+            // Set the distance for cells next to our current range
+            foreach ff.edge ee do
+            {
+                foreach ee.facet ff2 do
+                {
+                    ff2.wound_distance := minimum(ff2.wound_distance, current_dist+1);
+                };
+            };
+        };
+        
+        current_dist += 1;
+    };
+}
+
+record_t1s :=
+{
+    recname := sprintf "output/t1s_%s.csv", output_name;
+    
+    get_wound_distance;
+    
+    // Count total t1s undergone by the cells
+    set facet total_t1s 0;
+
+    foreach edge ee where t1_timer == 2 do
+    {
+        facet[ee.cell1].total_t1s += 1;
+        facet[ee.cell2].total_t1s += 1;
+        facet[ee.cell3].total_t1s += 1;
+        facet[ee.cell4].total_t1s += 1;
+        
+        ee.t1_timer := 0;
+    };
+     
+    foreach edge ee where t1_timer == 1 do
+    {
+        ee.t1_timer := 2;
+    };
+    
+    // Now record the number of t1s at each row
+    local ii, num_t1s;
+    
+    for ( ii := 0 ; ii < 6; ii += 1 )
+    {
+        printf "%f,", sum(facet where wound_distance == ii, total_t1s) >> recname;
+    };
+    
+    printf "\n" >> recname;
+    
+}
+
+record_wound_distance :=
+{
+	recname := sprintf "output/wound_distance_%s.csv", output_name;
+	foreach facet ff where void == 0 do
+	{
+		printf "%f,", ff.wound_distance >> recname;
+	};
+
+	printf "\n" >> recname;
+}
 
 
-//-----------------------------------------------------------------//
 //-----------------------------------------------------------------//
                           /* Dynamics */
-//-----------------------------------------------------------------//
 //-----------------------------------------------------------------//
 
 // Flags whether or not an edge should be t1 edge swapped
 function integer should_t1(integer eid)
 {
-	// The edge must be below some minimum length
+	//The edge must be below some minimum length
 	if edge[eid].length > lt1 / length_scale then return 0;
+    
+    // Must have two facets
+    if sum(edge[eid].facet, 1) < 2 then return 0;
 
-	if sum(edge[eid].facet, 1) < 2 then return 0;
+    // Must be the only edge between two facets ie no subdivided edges
+	if sum(edge[eid].vertex[1].edge where sub_edge == 0 and focal == 0, 1) < 3 then return 0;
+	if sum(edge[eid].vertex[2].edge where sub_edge == 0 and focal == 0, 1) < 3 then return 0;
 
-	// If the forcing on the two vertices is reducing the length then we should t1 swap
-	// This is the dot product of the edge direction with the changing in the edge direction
+
+	//If the forcing on the two vertices is reducing the length then we should t1 swap
+
+	//This is the dot product of the edge direction with the changing in the edge direction
 	return ((edge[eid].vertex[1].x - edge[eid].vertex[2].x)*(edge[eid].vertex[1].vel_x - edge[eid].vertex[2].vel_x) + (edge[eid].vertex[1].y - edge[eid].vertex[2].y)*(edge[eid].vertex[1].vel_y - edge[eid].vertex[2].vel_y) < 0);
 }
 
 /* Attempt T1s */
 try_t1 :=
 {
-  local vid_1,vid_2,mycom,mymsg;
+  local t1_count, vid_1, vid_2, mycom, mymsg, wound_edge_count;
 
   foreach edge ee where sub_edge == 0 AND focal == 0 do
   {
     if should_t1(ee.id)
       then
       {
+
+		// Record the cells involved in the t1 - only if the edge did not t1 and then t1 back
+		if ee.t1_timer == 0 then
+		{
+            ee.cell1 := ee.facets[1].id;
+            ee.cell2 := ee.facets[2].id;
+        };
+
         t1_edgeswap ee;
+
+        // The edge changes neighbours on t1_transition so record these
+        if ee.t1_timer == 0 then
+        {
+            ee.cell3 := ee.facets[1].id;
+            ee.cell4 := ee.facets[2].id;
+
+			ee.t1_timer := 1;
+        }
+        else
+        {
+            // The edge must have t1d and then t1d back
+            ee.t1_timer := 0;
+        };
+
         vid_1 := ee.vertex[1].id;
         vid_2 := ee.vertex[2].id;
-        foreach vertex[vid_1].facets ff where not void do
-          { 
+          
+        // Reassign energy functions
+        foreach vertex[vid_1].facets ff do
+		{ 
 			mycom := sprintf "unset edges ar%g",ff.original;
 			exec mycom;
 			mycom := sprintf "set facet[%g].edge method_instance ar%g",ff.id,ff.original;
@@ -433,9 +499,15 @@ try_t1 :=
 			exec mycom;
 			mycom := sprintf "set facet[%g].edge method_instance perim%g",ff.id,ff.original;
 			exec mycom;
-          };
-        foreach vertex[vid_2].facets ff where not void do
-          { 
+
+			// Check if it still borders the wound
+            wound_edge_count := 0;
+            foreach ff.edge ee2 do {wound_edge_count += sum(ee2.facet where void, 1);};
+            if wound_edge_count == 0 then {ff.wound_facet := 0;} else {ff.wound_facet := 1;};
+              
+		};
+        foreach vertex[vid_2].facets ff do
+		{ 
 			mycom := sprintf "unset edges ar%g",ff.original;
 			exec mycom;
 			mycom := sprintf "set facet[%g].edge method_instance ar%g",ff.id,ff.original;
@@ -444,7 +516,12 @@ try_t1 :=
 			exec mycom;
 			mycom := sprintf "set facet[%g].edge method_instance perim%g",ff.id,ff.original;
 			exec mycom;
-          };
+              
+              // Check if it still borders the wound
+              wound_edge_count := 0;
+              foreach ff.edge ee2 do {wound_edge_count += sum(ee2.facet where void, 1);};
+              if wound_edge_count == 0 then {ff.wound_facet := 0;} else {ff.wound_facet := 1;};
+		};
         t1_count+=1;
       }
     else{};
@@ -454,42 +531,37 @@ try_t1 :=
 }
 
 
-//-----------------------------------------------------------------//
 /* Get forces due to shape equilibrium model on each vertex */
 get_shape_forces := 
 { 
-  // init_method_instance;
-  g;
-  foreach vertex vv  do 
-    {                  
-      vv.fx_shape := vv.v_force[1];
-      vv.fy_shape := vv.v_force[2];
-    } 
-};
+	g;
+	foreach vertex vv  do
+	{
+		vv.fx_shape := vv.v_force[1];
+		vv.fy_shape := vv.v_force[2];
 
-//-----------------------------------------------------------------//
+    } 
+}; 
+
+
 /* dynamically evolve the polarization on each facet */
 evolve_polarization_facet:=
-{
+{    
     local rr, dir_x, dir_y, out_angle;
     foreach facet ff where not void do
     {
-		// Fluctuate internal cells
-		rr := DR  * time_scale * randn(0,1);
+        // Fluctuate internal cells
+        rr := DR  * time_scale * randn(0,1);
 		ff.pol_angle += rr * sqrt(dt / time_scale);
-
-		// External cells want to crawl away from the colony and spread out
-		local void_count;
-		void_count := 0;
-		foreach ff.edge ee do {void_count += sum(ee.facet where void, 1);};
+        
+        // Wound cells crawl towards gap
         
         // Polarisation angle can be off by +- pi/2
         ff.pol_angle := ff.pol_angle mod 2*pi;
 
-		// Outside cells want to crawl outwards to spread out
-		if void_count > 0 then
-		{
-            // Spread out - get cell vertices that are on the gap, move in average angle of the two
+        if ff.wound_facet then
+        {
+            // Fill wound - get cell vertices that are on the gap, move in average angle of the two
             local vid1, vid2, ang1, ang2, ang;
             
             vid1 := -1;
@@ -499,7 +571,7 @@ evolve_polarization_facet:=
                 // If its a 3 way junction between two cells and the wound
                 if sum(vv.facet where void, 1) == 1 and sum(vv.facet where not void, 1) > 1 then
                 {
-					if vid1 == -1 then {vid1 := vv.id} else {vid2 := vv.id;};
+                    if vid1 == -1 then {vid1 := vv.id} else {vid2 := vv.id;};
                 };
             };
             
@@ -508,74 +580,69 @@ evolve_polarization_facet:=
             ang2 := atan2(vertex[vid2].y - ff.center_y, vertex[vid2].x - ff.center_x);
             
             // Cell angle is the average of these two angles
-            ang := atan2(sin(ang1)+sin(ang2),cos(ang1)+cos(ang2));
-
-			// If the cell is outside, it will move back in.
-			// If the cell inside, but is poking out a bit it can move randomly
-            if pattern_distance(ff.center_x, ff.center_y) < -0.6 then {ff.pol_angle := ang;}
-			else { if pattern_distance(ff.center_x, ff.center_y) > 0 then { ff.pol_angle := ang + pi;};};
-		};
+            
+            ff.pol_angle := atan2(sin(ang1)+sin(ang2),cos(ang1)+cos(ang2));
+        };
     };
 }
 
 
-//-----------------------------------------------------------------//
-
-
 // Forces from internal cell crawling
 get_active_forces :=
-{
-	foreach facet ff do
-	{
-		ff.fx_active := V0  * time_scale / length_scale * cos(ff.pol_angle);
-		ff.fy_active := V0  * time_scale / length_scale * sin(ff.pol_angle);
-
-		// Half internal motility on outside because they can crawl too!
-		local void_count;
-		void_count := 0;
-
-		foreach ff.edge ee do {void_count += sum(ee.facet where void, 1);};
-
-		if void_count > 0 then {ff.fx_active := 0.5*ff.fx_active; ff.fy_active := 0.5*ff.fy_active;};
-
-	}
-
+{    
+    // Wound cells and cells on the outside don't have internal motility
+    foreach facet ff do
+    {
+        local vf;
+        
+        if ff.wound_facet == 0 and min(ff.edge, valence) > 1 then {vf := V0;} else {vf := 0};
+        
+        ff.fx_active := vf / length_scale * time_scale * cos(ff.pol_angle);
+        ff.fy_active := vf / length_scale * time_scale * sin(ff.pol_angle);
+    };
 }
 
-//-----------------------------------------------------------------//
-// one simulation step
+// Move vertices
+apply_forces :=
+{
+	//Get forces on each vertex
+	foreach vertex vv where !fixed do
+	{
+		vv.vel_x:= vv.fx_shape + avg(vv.facets where void == 0, fx_active);
+		vv.vel_y:= vv.fy_shape + avg(vv.facets where void == 0, fy_active);
+	};
+
+	//Move them
+	foreach vertex vv where !fixed do
+	{
+		vv.x += dt * vv.vel_x  / (viscosity / force_scale  * length_scale);
+		vv.y += dt * vv.vel_y  / (viscosity / force_scale  * length_scale);
+	};
+}
+
 
 
 //Relax the system with no motility or adhesion - used to go from voronoi to a rest state
 relax_one :=
 {
+	get_cell_centers;
 	get_shape_forces;
-
-	foreach vertex vv where !fixed do
-	{
-		vv.vel_x:= vv.fx_shape;
-		vv.vel_y:= vv.fy_shape;
-		vv.x += dt * vv.vel_x / (viscosity / force_scale  * length_scale);
-		vv.y += dt * vv.vel_y / (viscosity / force_scale  * length_scale);
-	};
-
-	//Check for T1s
-
-	//Split long edges
-	refine edge where length > lmax  / length_scale AND sub_edge == 0 AND focal == 0;
-
-	// Merge long edges
-	delete edge ee where length < lmin  / length_scale and ee.vertex[1].valence == 2 and sub_edge == 0 and focal == 0;
-	delete edge ee where length < lmin  / length_scale and ee.vertex[2].valence == 2 and sub_edge == 0 and focal == 0;
-
+	apply_forces;
 	try_t1;
+
+	simulation_step += 1;
 }
 
 
-// A time step with adhesions and motility forces
+// One simulation step with wounding
 move_one :=
 {
 	get_cell_centers;
+
+	//Wound area
+	mycom := sprintf "wound_area := abs(ar%g.value)",newf;
+	exec mycom;
+
 
 	if recording AND simulation_step % img_output_interval == 0 then
 	{
@@ -583,61 +650,66 @@ move_one :=
 		postscript imgname;
 	};
 
-
 	if recording AND simulation_step % record_interval == 0 then
 	{
 		record_displacements;
-		record_cell_centers;
-		record_boundary_vertices;
+		record_wound_area;
+	};
+
+	update_adhesions;
+    
+
+    //Split long edges
+    refine edge where length > lmax / length_scale AND sub_edge == 0 AND focal == 0;
+    
+	//Check for t1_edgeswaps - first we need to reduce any short edges made of multiple edges to just one edges
+	delete edge ee where length < lmin / length_scale and ee.vertex[1].valence == 2 and sub_edge == 0 and focal == 0;
+	delete edge ee where length < lmin / length_scale and ee.vertex[2].valence == 2 and sub_edge == 0 and focal == 0;
+
+	try_t1;
+
+	//Update which edges are wound
+	set edge tension 0;
+	set edge color cellCol where focal == 0 and sub_edge == 0;
+
+
+	//Randomly change from crawling to purse string for cells next to wound
+	foreach facet ff where crawling do
+	{
+		//Check if next to wound
+		wound_edges := 0;
+		foreach ff.edge ee do
+		{
+			wound_edges += sum(ee.facet where id == newf, 1);
+		};
+
+		if wound_edges > 0 and random < purse_string_rate * dt then set ff.crawling 0;
+
+	};
+
+	//Apply forces and colours
+	foreach facet[newf].edge ee do
+	{
+		//Purse string
+		if sum(ee.facet where crawling == 1 and void == 0, 1) == 0 then
+		{
+			set ee tension purse_string_tension / force_scale;
+			set ee color purseCol;
+		}
+		//Crawling
+		else
+		{
+			// Small tension to prevent overlapping
+			set ee tension wound_tension;
+			set ee color woundCol;
+		}
 	};
 
 	get_shape_forces;
 	get_active_forces;
 	evolve_polarization_facet;
-	update_adhesions;
 
-	foreach vertex vv where !fixed do
-	{
-		vv.vel_x:= vv.fx_shape + avg(vv.facets,fx_active);
-		vv.vel_y:= vv.fy_shape + avg(vv.facets,fy_active);
-		vv.x += dt * vv.vel_x / (viscosity / force_scale * length_scale);
-		vv.y += dt * vv.vel_y / (viscosity / force_scale * length_scale);
-	};
+	apply_forces;
 
-	//Check for T1s
-
-	//Split long edges
-	refine edge where length > lmax /length_scale AND sub_edge == 0 AND focal == 0;
-
-	// Merge short edges
-	delete edge ee where length < lmin / length_scale and sum(ee.vertex[1].edge, 1) == 2 and sub_edge == 0 and focal == 0;
-	delete edge ee where length < lmin / length_scale and sum(ee.vertex[2].edge, 1) == 2 and sub_edge == 0 and focal == 0;
-
-	try_t1;
-
-	set edge tension 0;
-	set facet[newf].edge tension colony_tension / force_scale;
-
-	simulation_step+=1;
+	simulation_step += 1;
 }
-
-
-/* set all cell properties according to parameters file */
-set_cell_properties:=
-{
-  local mycom;
-  foreach facet ff where not void do
-  {
-  	mycom := sprintf "farea%d.modulus := %f;", ff.id, kappa; 
-    exec mycom;
-    mycom := sprintf "per%d.modulus := %f;", ff.id, gamma  * length_scale / force_scale; 
-    exec mycom;
-    mycom := sprintf "ten%d.modulus := %f;", ff.id, -2 * gamma  * length_scale / force_scale * pzero;
-    exec mycom; 
-  };
-
-
-
-return 0
-}
-
