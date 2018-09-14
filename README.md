@@ -3,7 +3,7 @@
 ### Active Adherent Vertex Model (AAVM) ###
 
 ##### as detailed in : #####
-#### Cooperation of dual modes of cell motility promotes epithelial stress relaxation to accelerate wound healing, arXiv:1808.01954 (2018) ####
+#### Cooperation of dual modes of cell motility promotes epithelial stress relaxation to accelerate wound healing, PLOS Comp Biol (2018) ####
 
 ### Authors / Contributors ###
 
