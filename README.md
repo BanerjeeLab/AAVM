@@ -3,7 +3,7 @@
 ### Active Adherent Vertex Model (AAVM) ###
 
 ##### as detailed in : #####
-#### Force localization modes in dynamic epithelial colonies, bioRxiv:336164 (2018) ####
+#### Force localization modes in dynamic epithelial colonies, MBoC (2018) ####
 
 ### Authors / Contributors ###
 
