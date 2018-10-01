@@ -65,7 +65,7 @@ allowing several simulation files with different parameters in the same folder.
 |DR|float|5/3600|s^(-1)|Cell polarity rotational diffusion|
 |**Purse-string**|||||
 |purse_string_tension|float|300|nN|Tension on purse-string edges on the wound|
-|purse_strin_rate|float|4/3600|um s^(-1)|Transition rate from crawling to purse-string on wound edge cells|
+|purse_string_rate|float|4/3600|um s^(-1)|Transition rate from crawling to purse-string on wound edge cells|
 |**Adhesion**|||||
 |kon|float|500/3600|s^(-1)|Adhesion binding rate|
 |koff|float|25/3600|s^(-1)|Adhesion unbinding rate|
